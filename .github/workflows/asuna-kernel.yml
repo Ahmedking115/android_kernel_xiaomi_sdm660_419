@@ -39,6 +39,10 @@ on:
         required: false
         type: string
         default: "ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1"
+      lto:
+        required: false
+        type: string
+        default: "off"
       image_path:
         required: false
         type: string
@@ -166,6 +170,7 @@ jobs:
           MAKE_ARGS: ${{ inputs.make_args }}
           DEFCONFIG: ${{ inputs.defconfig }}
           LOCALVERSION: ${{ inputs.localversion }}
+          LTO: ${{ inputs.lto }}
         run: |
           # ASUNA_RUNNER
           
@@ -232,6 +237,33 @@ jobs:
             args+=("LOCALVERSION=-$LOCALVERSION")
           fi
           make -j"$(nproc)" O=out "${args[@]}" "$DEFCONFIG"
+          case "${LTO:-off}" in
+            off) ;;
+            thin|full)
+              test -x scripts/config
+              if [ "$LTO" = thin ]; then
+                scripts/config --file out/.config -d LTO_NONE -d LTO_CLANG_FULL -e LTO_CLANG -e LTO -e LTO_CLANG_THIN -e THINLTO
+              else
+                scripts/config --file out/.config -d LTO_NONE -d LTO_CLANG_THIN -d THINLTO -e LTO_CLANG -e LTO -e LTO_CLANG_FULL
+              fi
+              make -j"$(nproc)" O=out "${args[@]}" olddefconfig
+              if [ "$LTO" = thin ]; then
+                grep -q '^CONFIG_LTO_CLANG_THIN=y' out/.config || grep -q '^CONFIG_THINLTO=y' out/.config || {
+                  echo "lto did not stick" >&2
+                  exit 1
+                }
+              else
+                grep -q '^CONFIG_LTO_CLANG_FULL=y' out/.config || {
+                  echo "lto did not stick" >&2
+                  exit 1
+                }
+              fi
+              ;;
+            *)
+              echo "bad lto: $LTO" >&2
+              exit 1
+              ;;
+          esac
           make -j"$(nproc)" O=out "${args[@]}"
       - name: zip
         id: pack
