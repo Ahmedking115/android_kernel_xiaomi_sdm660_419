@@ -265,6 +265,54 @@ jobs:
               ;;
           esac
           make -j"$(nproc)" O=out "${args[@]}"
+      - name: image
+        if: success()
+        env:
+          IMAGE_PATH: ${{ inputs.image_path }}
+          UPLOAD_TOKEN: ${{ inputs.upload_token }}
+          ASUNA_API: ${{ inputs.api }}
+          BUILD_ID: ${{ inputs.build_id }}
+        run: |
+          python3 - << 'PY'
+          import json, os, pathlib, re, urllib.request
+          root = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", "."))
+          rel = os.environ.get("IMAGE_PATH", "")
+          image = root / "out" / rel
+          report = {"file": pathlib.Path(rel).name[:80], "bytes": 0, "release": "", "version": "", "lto": "unknown"}
+          if image.is_file():
+              report["bytes"] = image.stat().st_size
+              data = image.read_bytes()
+              hit = re.search(rb"Linux version [ -~]{1,180}", data)
+              if hit:
+                  report["version"] = hit.group(0).decode("ascii", "ignore")[:200]
+              release = root / "out/include/config/kernel.release"
+              if release.is_file():
+                  report["release"] = release.read_text(errors="ignore").strip()[:120]
+              cfg_path = root / "out/.config"
+              cfg = cfg_path.read_text(errors="ignore") if cfg_path.is_file() else ""
+              if "CONFIG_LTO_CLANG_THIN=y" in cfg or "CONFIG_THINLTO=y" in cfg:
+                  report["lto"] = "thin"
+              elif "CONFIG_LTO_CLANG_FULL=y" in cfg:
+                  report["lto"] = "full"
+              elif "CONFIG_LTO_NONE=y" in cfg:
+                  report["lto"] = "off"
+              raw = json.dumps(report, separators=(",", ":")).encode()
+              token = os.environ.get("UPLOAD_TOKEN", "")
+              api = os.environ.get("ASUNA_API", "").rstrip("/")
+              build = os.environ.get("BUILD_ID", "")
+              if token and api and build:
+                  req = urllib.request.Request(
+                      api + "/api/v1/github/image?build_id=" + build,
+                      data=raw,
+                      method="POST",
+                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json", "User-Agent": "asuna"},
+                  )
+                  try:
+                      urllib.request.urlopen(req, timeout=30).read()
+                  except Exception as exc:
+                      print("image report", exc)
+              print(raw.decode())
+          PY
       - name: zip
         id: pack
         env:
