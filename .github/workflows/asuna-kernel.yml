@@ -69,6 +69,7 @@ jobs:
         env:
           BUILD_ID: ${{ inputs.build_id }}
           PAYLOAD: ${{ inputs.payload }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           api=$(PAYLOAD="$PAYLOAD" python3 -c 'import json,os; print(json.loads(os.environ["PAYLOAD"])["api"])')
